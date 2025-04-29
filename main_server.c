@@ -8,7 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define PORT_NUM 11111
+#define PORT_NUM 7777
 
 void error(const char *msg)
 {
@@ -64,7 +64,8 @@ void print_current_clients(){
 		if (cur->username != NULL){
 			// get client ip address from client socket file directory
 			if (getpeername(cur->clisockfd, (struct sockaddr*)&cliaddr, &clen) < 0){
-				error("print_current_clients ERROR Unknown sender!");
+				cur = cur->next;
+				continue;
 			}
 			printf("%s [ip: %s]\n", cur->username, inet_ntoa(cliaddr.sin_addr));
 		}	
@@ -79,33 +80,6 @@ char* getIpAddress(int clifd){
 	socklen_t clen = sizeof(cliaddr);
 	if (getpeername(clifd, (struct sockaddr*)&cliaddr, &clen) < 0) error("GET IP ADDRESS ERROR Unknown sender!");
 	return inet_ntoa(cliaddr.sin_addr);
-}
-
-void remove_client(int sockfd) {
-	USR* cur = head;
-	USR *prev = NULL;
-
-	while (cur != NULL) {
-		if (cur->clisockfd == sockfd){
-			free(cur->username);
-			if (prev == NULL){
-				head = cur->next; // case for removing head node
-				if (cur == tail){
-					tail = NULL;
-				}
-			}
-			else {
-				prev->next = cur->next; // removing middle/tail node
-				if (cur == tail){
-					tail = prev; // update tail if needed
-				} 
-			}
-			free(cur);
-			return;
-			}
-		prev = cur;
-		cur = cur->next;
-	}
 }
 
 void broadcast(int fromfd, char* message)
@@ -145,6 +119,33 @@ void broadcast(int fromfd, char* message)
 	}
 }
 
+void remove_client(int sockfd) {
+	USR* cur = head;
+	USR *prev = NULL;
+
+	while (cur != NULL) {
+		if (cur->clisockfd == sockfd){
+			free(cur->username);
+			if (prev == NULL){
+				head = cur->next; // case for removing head node
+				if (cur == tail){
+					tail = NULL;
+				}
+			}
+			else {
+				prev->next = cur->next; // removing middle/tail node
+				if (cur == tail){
+					tail = prev; // update tail if needed
+				} 
+			}
+			free(cur);
+			return;
+			}
+		prev = cur;
+		cur = cur->next;
+	}
+}
+
 typedef struct _ThreadArgs {
 	int clisockfd;
 } ThreadArgs;
@@ -174,7 +175,7 @@ void* thread_main(void* args)
 	// TODO send to client server acceptance of username
 	printf("%s(%s) joined chatroom!\n", buffer, getIpAddress(clisockfd));
 	strcpy(buffer, "usr_accepted\0");
-	int nsend = send(clisockfd, buffer, strlen(buffer) + 1, 0);
+	nsen = send(clisockfd, buffer, strlen(buffer) + 1, 0);
 	if (nsen < 0) error("ERROR send() failed");
 
 	print_current_clients();
