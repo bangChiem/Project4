@@ -87,7 +87,9 @@ void broadcast(int fromfd, char* message)
 	// figure out sender address
 	struct sockaddr_in cliaddr;
 	socklen_t clen = sizeof(cliaddr);
-	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0) error("broadcast ERROR Unknown sender!");
+	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0){
+		return;
+	}
 
 	//get send USR
 	USR* sender = head;
@@ -125,6 +127,9 @@ void remove_client(int sockfd) {
 
 	while (cur != NULL) {
 		if (cur->clisockfd == sockfd){
+			char client_left_msg[50];
+			sprintf(client_left_msg, "left the chat room\n");
+			broadcast(sockfd, client_left_msg);
 			free(cur->username);
 			if (prev == NULL){
 				head = cur->next; // case for removing head node
@@ -173,11 +178,16 @@ void* thread_main(void* args)
 	insert_username(buffer, clisockfd);
 
 	// TODO send to client server acceptance of username
-	printf("%s(%s) joined chatroom!\n", buffer, getIpAddress(clisockfd));
 	strcpy(buffer, "usr_accepted\0");
 	nsen = send(clisockfd, buffer, strlen(buffer) + 1, 0);
 	if (nsen < 0) error("ERROR send() failed");
 
+	// broadcast to all clients of new client that has joined server
+	char client_joined_msg[50];
+	sprintf(client_joined_msg, "joined chatroom!\n");
+	broadcast(clisockfd, client_joined_msg);
+
+	// print current clients to server
 	print_current_clients();
 
 	while (nrcv > 0) {
@@ -185,7 +195,9 @@ void* thread_main(void* args)
 		memset(buffer, 0, 256);
 		nrcv = recv(clisockfd, buffer, 255, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
-		broadcast(clisockfd, buffer);
+		if (nrcv > 0 ){
+			broadcast(clisockfd, buffer);
+		}
 	}
 	// if client leaves, remove client from linked list and notify all current clients of new client list
 	remove_client(clisockfd);

@@ -9,7 +9,7 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 11111
+#define PORT_NUM 7777
 
 void error(const char *msg)
 {
