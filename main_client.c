@@ -9,7 +9,7 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 7777
+#define PORT_NUM 9999
 
 void error(const char *msg)
 {
@@ -34,8 +34,8 @@ void* thread_main_recv(void* args)
 	// wait for server to send user accepted handshake message
 	while(1){
 		char buffer[512];
+		printf("waiting for server handshake\n");
 		n = recv(sockfd, buffer, 512, 0);
-
 		// detect handshake message and allow client to receive messages from chat room
 		if (strcmp(buffer, "usr_accepted") == 0){
 			break;

@@ -8,7 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define PORT_NUM 7777
+#define PORT_NUM 9999
 
 void error(const char *msg)
 {
@@ -32,10 +32,12 @@ void add_tail(int newclisockfd)
 		head->clisockfd = newclisockfd;
 		head->next = NULL;
 		tail = head;
+		head->username = NULL;
 	} else {
 		tail->next = (USR*) malloc(sizeof(USR));
 		tail->next->clisockfd = newclisockfd;
 		tail->next->next = NULL;
+		tail->next->username = NULL;
 		tail = tail->next;
 	}
 }
@@ -46,8 +48,8 @@ void insert_username(char* new_username, int clisockfd){
 	USR *cur = head;
 	while (cur != NULL){
 		if (cur->clisockfd == clisockfd){
-			cur->username = malloc(sizeof(new_username) + 1);
-			strncpy(cur->username, new_username, sizeof(new_username) - 1);
+			cur->username = malloc(strlen(new_username) + 1);
+			strcpy(cur->username, new_username);
 			return;
 		}
 		cur = cur->next;
