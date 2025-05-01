@@ -8,7 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define PORT_NUM 9999
+#define PORT_NUM 1111
 
 void error(const char *msg)
 {
@@ -180,8 +180,8 @@ void* thread_main(void* args)
 	insert_username(buffer, clisockfd);
 
 	// TODO send to client server acceptance of username
-	strcpy(buffer, "usr_accepted\0");
-	nsen = send(clisockfd, buffer, strlen(buffer) + 1, 0);
+	const char *accept_msg = "usr_accepted";
+	nsen = send(clisockfd, accept_msg, strlen(accept_msg), 0);
 	if (nsen < 0) error("ERROR send() failed");
 
 	// broadcast to all clients of new client that has joined server

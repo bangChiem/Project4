@@ -9,7 +9,7 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 9999
+#define PORT_NUM 1111
 
 void error(const char *msg)
 {
@@ -31,11 +31,10 @@ void* thread_main_recv(void* args)
 	char buffer[512];
 	int n;
 
-	// wait for server to send user accepted handshake message
+	// wait for server to send user accepted handshake message "usr_accepted"
 	while(1){
-		char buffer[512];
-		printf("waiting for server handshake\n");
 		n = recv(sockfd, buffer, 512, 0);
+		if (n < 0) error("ERROR recv() failed for usr_accepted msg");
 		// detect handshake message and allow client to receive messages from chat room
 		if (strcmp(buffer, "usr_accepted") == 0){
 			break;
@@ -63,24 +62,14 @@ void* thread_main_send(void* args)
 	// keep sending messages to the server
 	char buffer[256];
 	int n;
-	int setup_username = 0;
+	printf("Type your username: ");
 
 	while (1) {
 		// You will need a bit of control on your terminal
 		// console or GUI to have a nice input window.
-		// printf("\nPlease enter the message: ");
-		if (setup_username == 0){
-			printf("Type your username: ");
-			setup_username = 1;
-		}
-		
 
 		memset(buffer, 0, 256);
-
 		fgets(buffer, 255, stdin);
-
-		if (strlen(buffer) == 1) buffer[0] = '\0';
-
 		n = send(sockfd, buffer, strlen(buffer), 0);
 		if (n < 0) error("ERROR writing to socket");
 
