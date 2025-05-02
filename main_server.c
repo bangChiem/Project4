@@ -7,8 +7,32 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <time.h>
 
-#define PORT_NUM 9999
+#define PORT_NUM 7777
+#define COLOR 6 // Total amount of colors
+int col[COLOR];
+int col_chosen[COLOR];
+int col_index = -1;
+
+void init_col(){
+    for (int i = 0; i < COLOR; i++)
+    {
+        col[i] = -1;
+    }
+}
+
+int gen_random_color(){
+    int c;
+    while(1){
+        c = ((rand() % COLOR));
+        if (col[c] == -1){
+            col[c] = 0;
+            return c+1;
+        }
+    }
+    return 0;
+}
 
 void error(const char *msg)
 {
@@ -17,7 +41,8 @@ void error(const char *msg)
 }
 
 typedef struct _USR {
-	char* username;  	
+	int msg_col;		// users msg color in chat room
+	char* username;  	// users name for chat room
 	int clisockfd;		// socket file descriptor
 	struct _USR* next;	// for linked list queue
 } USR;
@@ -30,9 +55,9 @@ void add_tail(int newclisockfd)
 	if (head == NULL) {
 		head = (USR*) malloc(sizeof(USR));
 		head->clisockfd = newclisockfd;
+		head->username = NULL;
 		head->next = NULL;
 		tail = head;
-		head->username = NULL;
 	} else {
 		tail->next = (USR*) malloc(sizeof(USR));
 		tail->next->clisockfd = newclisockfd;
@@ -42,18 +67,32 @@ void add_tail(int newclisockfd)
 	}
 }
 
-// returns 1 on successfull username removal, returns 0 if client cannot be found
-void insert_username(char* new_username, int clisockfd){
+// returns 1 on successfull username insertion, returns 0 if client cannot be found
+int insert_username(char* new_username, int clisockfd){
 	new_username[strcspn(new_username, "\n")] = '\0';
 	USR *cur = head;
 	while (cur != NULL){
 		if (cur->clisockfd == clisockfd){
 			cur->username = malloc(strlen(new_username) + 1);
 			strcpy(cur->username, new_username);
-			return;
+			return 1;
 		}
 		cur = cur->next;
 	}
+	return 0;
+}
+
+// returns 1 on successfull color change, returns 0 if client cannot be found
+int set_user_msg_color(int clisockfd){
+	USR *cur = head;
+	while (cur != NULL){
+		if (cur->clisockfd == clisockfd){
+			cur->msg_col = gen_random_color();
+			return 1;
+		}
+		cur = cur->next;
+	}
+	return 0;
 }
 
 void print_current_clients(){
@@ -69,7 +108,7 @@ void print_current_clients(){
 				cur = cur->next;
 				continue;
 			}
-			printf("%s [ip: %s]\n", cur->username, inet_ntoa(cliaddr.sin_addr));
+			printf("%s[ip: %s]\n", cur->username, inet_ntoa(cliaddr.sin_addr));
 		}	
 		cur = cur->next;
 	}
@@ -84,16 +123,15 @@ char* getIpAddress(int clifd){
 	return inet_ntoa(cliaddr.sin_addr);
 }
 
-void broadcast(int fromfd, char* message)
+void broadcast(int fromfd, char* message, int server_msg)
 {
-	// figure out sender address
-	struct sockaddr_in cliaddr;
-	socklen_t clen = sizeof(cliaddr);
-	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0){
-		return;
-	}
+	// slice newline char from msg
+	message[strcspn(message, "\n")] = '\0';
 
-	//get send USR
+	// message color of sender
+	int sender_msg_color = 0;
+
+	// get send USR
 	USR* sender = head;
 	while (sender != NULL){
 		if (sender->clisockfd == fromfd){
@@ -102,18 +140,23 @@ void broadcast(int fromfd, char* message)
 		sender = sender->next;
 	}
 
+	// get sender msg color / if broadcast is server message default color to white
+	if (server_msg == 1){
+		sender_msg_color = 7;
+	}
+	else{
+		sender_msg_color = sender->msg_col;
+	}
 
 	// traverse through all connected clients
 	USR* cur = head;
 	while (cur != NULL) {
 		// check if cur is not the one who sent the message
 		if (cur->clisockfd != fromfd) {
-			char buffer[512];
-
 			// prepare message
-			sprintf(buffer, "[%s(%s)] %s", sender->username, getIpAddress(sender->clisockfd), message);
+			char buffer[512];
+			sprintf(buffer, "\e[3%dm[%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
 			int nmsg = strlen(buffer);
-
 			// send!
 			int nsen = send(cur->clisockfd, buffer, nmsg, 0);
 			if (nsen != nmsg) error("ERROR send() failed");
@@ -129,9 +172,12 @@ void remove_client(int sockfd) {
 
 	while (cur != NULL) {
 		if (cur->clisockfd == sockfd){
+			// free color
+			col[cur->msg_col -1] = -1;
+
 			char client_left_msg[50];
 			sprintf(client_left_msg, "left the chat room\n");
-			broadcast(sockfd, client_left_msg);
+			broadcast(sockfd, client_left_msg, 1);
 			free(cur->username);
 			if (prev == NULL){
 				head = cur->next; // case for removing head node
@@ -168,37 +214,53 @@ void* thread_main(void* args)
 
 	//-------------------------------
 	// Now, we receive/send messages
-	char buffer[256];
-	int nsen, nrcv;
+	char buffer[512];
+	int nsen, nrcv = 0;
 
 	// receive username
-	memset(buffer, 0, 256);
-	nrcv = recv(clisockfd, buffer, 255, 0);
-	if (nrcv < 0) error("ERROR recv() failed");
+	while(nrcv == 0){
+		memset(buffer, 0, 512);
+		nrcv = recv(clisockfd, buffer, 512, 0);
+		if (nrcv < 0) error("ERROR recv() failed");
+	}
 
 	// insert username
-	insert_username(buffer, clisockfd);
+	if (insert_username(buffer, clisockfd) == 0){
+		error("failed to insert users username");
+	};
+
+	// set user message color
+	if(set_user_msg_color(clisockfd) == 0){
+		error("failed to find user and change message color");
+	}
 
 	// TODO send to client server acceptance of username
-	strcpy(buffer, "usr_accepted\0");
-	nsen = send(clisockfd, buffer, strlen(buffer) + 1, 0);
+	const char* confirm_msg = "CONNECTED\n";
+	nsen = send(clisockfd, confirm_msg, strlen(confirm_msg), 0);
 	if (nsen < 0) error("ERROR send() failed");
-
+	if (nsen == 0){
+		printf("ERROR invalid username entered");
+		return NULL;
+	} 
 	// broadcast to all clients of new client that has joined server
 	char client_joined_msg[50];
 	sprintf(client_joined_msg, "joined chatroom!\n");
-	broadcast(clisockfd, client_joined_msg);
-
+	broadcast(clisockfd, client_joined_msg, 1);
 	// print current clients to server
 	print_current_clients();
 
 	while (nrcv > 0) {
 		// we send the message to everyone except the sender
-		memset(buffer, 0, 256);
-		nrcv = recv(clisockfd, buffer, 255, 0);
+		memset(buffer, 0, 512);
+		nrcv = recv(clisockfd, buffer, 512, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
-		if (nrcv > 0 ){
-			broadcast(clisockfd, buffer);
+
+		if (nrcv == 1) {
+			break;
+		}
+
+		if (nrcv > 0){
+			broadcast(clisockfd, buffer, 0);
 		}
 	}
 	// if client leaves, remove client from linked list and notify all current clients of new client list
@@ -212,6 +274,10 @@ void* thread_main(void* args)
 
 int main(int argc, char *argv[])
 {
+	// initialize random seed time and color array
+	srand(time(0));
+	init_col();
+
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
 
@@ -250,4 +316,3 @@ int main(int argc, char *argv[])
 
 	return 0; 
 }
-

@@ -9,7 +9,11 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 9999
+#define PORT_NUM 7777
+pthread_mutex_t send_recv_lock;
+pthread_cond_t send_recv_cond;
+
+int username_sent = 0;
 
 void error(const char *msg)
 {
@@ -23,6 +27,11 @@ typedef struct _ThreadArgs {
 
 void* thread_main_recv(void* args)
 {
+	pthread_mutex_lock(&send_recv_lock);
+	while(username_sent == 0){
+		pthread_cond_wait(&send_recv_cond, &send_recv_lock);
+	}
+	pthread_mutex_unlock(&send_recv_lock);
 	pthread_detach(pthread_self());
 	int sockfd = ((ThreadArgs*) args)->clisockfd;
 	free(args);
@@ -32,24 +41,20 @@ void* thread_main_recv(void* args)
 	int n;
 
 	// wait for server to send user accepted handshake message
-	while(1){
-		char buffer[512];
-		printf("waiting for server handshake\n");
-		n = recv(sockfd, buffer, 512, 0);
-		// detect handshake message and allow client to receive messages from chat room
-		if (strcmp(buffer, "usr_accepted") == 0){
-			break;
-		}
+	memset(buffer, 0, 512);
+	n = recv(sockfd, buffer, 512, 0);
+	if (n <= 0 || strcmp(buffer, "CONNECTED\n") != 0){
+		close(sockfd);
+		error("Server did not accept username");
 	}
 
+	// receive message that was broadcasted and print in client terminal
 	while (n > 0) {
 		memset(buffer, 0, 512);
 		n = recv(sockfd, buffer, 512, 0);
 		if (n < 0) error("ERROR recv() failed");
-
-		printf("\n%s\n", buffer);
+		printf("%s", buffer);
 	}
-
 	return NULL;
 }
 
@@ -60,31 +65,33 @@ void* thread_main_send(void* args)
 	int sockfd = ((ThreadArgs*) args)->clisockfd;
 	free(args);
 
-	// keep sending messages to the server
-	char buffer[256];
+	// prompt user for username and send to server
+	char buffer[512];
 	int n;
-	int setup_username = 0;
+	printf("Type your username: ");
+	memset(buffer, 0, 512);
+	fgets(buffer, 512, stdin);
+	n = send(sockfd, buffer, strlen(buffer), 0);
+	if (n < 0) error("ERROR writing to socket");
 
+
+	// unlock receive thread to receive server handshake
+	username_sent = 1;
+	pthread_cond_signal(&send_recv_cond);
+	pthread_mutex_unlock(&send_recv_lock);
 	while (1) {
 		// You will need a bit of control on your terminal
 		// console or GUI to have a nice input window.
 		// printf("\nPlease enter the message: ");
-		if (setup_username == 0){
-			printf("Type your username: ");
-			setup_username = 1;
-		}
 		
-
-		memset(buffer, 0, 256);
-
-		fgets(buffer, 255, stdin);
-
-		if (strlen(buffer) == 1) buffer[0] = '\0';
-
+		// allow user to send messages to server to be broadcasted to other clients
+		memset(buffer, 0, 512);
+		fgets(buffer, 512, stdin);
 		n = send(sockfd, buffer, strlen(buffer), 0);
 		if (n < 0) error("ERROR writing to socket");
-
-		if (n == 0) break; // we stop transmission when user type empty string
+		if (n == 1){
+			break;
+		} // we stop transmission when user type empty string
 	}
 
 	return NULL;
@@ -92,6 +99,14 @@ void* thread_main_send(void* args)
 
 int main(int argc, char *argv[])
 {
+	if (pthread_mutex_init(&send_recv_lock, NULL)){
+		error("mutex lock failed to intialize");
+	}
+
+	if (pthread_cond_init(&send_recv_cond, NULL) != 0){
+		error("pthread condition failed to initialize");
+	}
+
 	if (argc < 2) error("Please speicify hostname");
 
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -117,17 +132,23 @@ int main(int argc, char *argv[])
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
-	pthread_create(&tid1, NULL, thread_main_send, (void*) args);
+	if (pthread_create(&tid1, NULL, thread_main_send, (void*) args) != 0){
+		error("ERROR: send thread failed to create");
+	};
 
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
-	pthread_create(&tid2, NULL, thread_main_recv, (void*) args);
+	if (pthread_create(&tid2, NULL, thread_main_recv, (void*) args) != 0){
+		error("ERROR recv thread failed to create");
+	};
 
 	// parent will wait for sender to finish (= user stop sending message and disconnect from server)
 	pthread_join(tid1, NULL);
+	pthread_join(tid2, NULL);
 
 	close(sockfd);
+	pthread_mutex_destroy(&send_recv_lock);
+	pthread_cond_destroy(&send_recv_cond);
 
 	return 0;
 }
-
