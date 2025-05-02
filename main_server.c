@@ -9,7 +9,7 @@
 #include <pthread.h>
 #include <time.h>
 
-#define PORT_NUM 7777
+#define PORT_NUM 9999
 #define COLOR 6 // Total amount of colors
 int col[COLOR];
 int col_chosen[COLOR];
@@ -129,7 +129,7 @@ void broadcast(int fromfd, char* message, int server_msg)
 	message[strcspn(message, "\n")] = '\0';
 
 	// message color of sender
-	int sender_msg_color = 0;
+	char sender_msg_color[6];
 
 	// get send USR
 	USR* sender = head;
@@ -142,10 +142,10 @@ void broadcast(int fromfd, char* message, int server_msg)
 
 	// get sender msg color / if broadcast is server message default color to white
 	if (server_msg == 1){
-		sender_msg_color = 7;
+		sprintf(sender_msg_color, "\e[0m");
 	}
 	else{
-		sender_msg_color = sender->msg_col;
+		sprintf(sender_msg_color, "\e[3%dm", sender->msg_col);
 	}
 
 	// traverse through all connected clients
@@ -155,7 +155,7 @@ void broadcast(int fromfd, char* message, int server_msg)
 		if (cur->clisockfd != fromfd) {
 			// prepare message
 			char buffer[512];
-			sprintf(buffer, "\e[3%dm[%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
+			sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
 			int nmsg = strlen(buffer);
 			// send!
 			int nsen = send(cur->clisockfd, buffer, nmsg, 0);
