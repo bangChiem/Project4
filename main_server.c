@@ -152,7 +152,7 @@ void broadcast(int fromfd, char* message, int server_msg)
 	USR* cur = head;
 	while (cur != NULL) {
 		// check if cur is not the one who sent the message
-		if (cur->clisockfd != fromfd) {
+		if (cur->clisockfd != fromfd && cur->username != NULL) {
 			// prepare message
 			char buffer[512];
 			sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
