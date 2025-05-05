@@ -9,11 +9,16 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 7777
+#define PORT_NUM 4444
+
 pthread_mutex_t send_recv_lock;
 pthread_cond_t send_recv_cond;
+pthread_cond_t room_req_cond;
+pthread_cond_t room_serv_resp_cond;
 
 int username_sent = 0;
+int server_room_response = 0;
+int room_req_sent = 0;
 
 void error(const char *msg)
 {
@@ -23,22 +28,62 @@ void error(const char *msg)
 
 typedef struct _ThreadArgs {
 	int clisockfd;
+	int new_room_req;
+	char *req_server_ip;
 } ThreadArgs;
 
 void* thread_main_recv(void* args)
 {
+	char buffer[512];
+	int n;
+	int room_req = ((ThreadArgs*) args)->new_room_req;
+	char server_ip_address[20];
+	strcpy(server_ip_address, ((ThreadArgs*) args)->req_server_ip);
+	pthread_detach(pthread_self());
+	int sockfd = ((ThreadArgs*) args)->clisockfd;
+	
+	// wait for room_req_sent
+	pthread_mutex_lock(&send_recv_lock);
+	while(room_req_sent == 0){
+		pthread_cond_wait(&room_req_cond, &send_recv_lock);
+	}
+	pthread_mutex_unlock(&send_recv_lock);
+	free(args);
+
+	// receive server response
+	int net_number;
+	recv(sockfd, &net_number, sizeof(net_number), 0);
+	int rcv_room_response = ntohl(net_number);
+
+	if (rcv_room_response < 0){
+		server_room_response = -1;
+		pthread_cond_signal(&room_serv_resp_cond);
+		pthread_mutex_unlock(&send_recv_lock);
+		printf("Room number does not exist\n");
+		return NULL;
+	}
+	else if (rcv_room_response > 0){
+		server_room_response = 1;
+		pthread_cond_signal(&room_serv_resp_cond);
+		pthread_mutex_unlock(&send_recv_lock);
+	}
+	else{
+		printf("INVALID ROOM SERVER RESPONSE: %d", rcv_room_response);
+	}
+
 	pthread_mutex_lock(&send_recv_lock);
 	while(username_sent == 0){
 		pthread_cond_wait(&send_recv_cond, &send_recv_lock);
 	}
 	pthread_mutex_unlock(&send_recv_lock);
-	pthread_detach(pthread_self());
-	int sockfd = ((ThreadArgs*) args)->clisockfd;
-	free(args);
 
-	// keep receiving and displaying message from server
-	char buffer[512];
-	int n;
+	// notify client of successful connection to server and room
+	if (room_req == -1){
+		printf("Connected to %s with new room number %d\n", server_ip_address, rcv_room_response);
+	}
+	else{
+		printf("Connected to %s with room number %d\n", server_ip_address, rcv_room_response);
+	}
 
 	// wait for server to send user accepted handshake message
 	memset(buffer, 0, 512);
@@ -60,40 +105,71 @@ void* thread_main_recv(void* args)
 
 void* thread_main_send(void* args)
 {
+	int n;
 	pthread_detach(pthread_self());
 
 	int sockfd = ((ThreadArgs*) args)->clisockfd;
+	int room_req = ((ThreadArgs*) args)->new_room_req;
 	free(args);
 
-	// prompt user for username and send to server
-	char buffer[512];
-	int n;
-	printf("Type your username: ");
-	memset(buffer, 0, 512);
-	fgets(buffer, 512, stdin);
-	n = send(sockfd, buffer, strlen(buffer), 0);
-	if (n < 0) error("ERROR writing to socket");
+	// send new room request to server
+	int net_number;
+	if (room_req == -1){
+		net_number = htonl(room_req);
+		send(sockfd, &net_number, sizeof(net_number), 0);
 
+	}
+	// or send to server request to join room #
+	else{
+		net_number = htonl(room_req);
+		send(sockfd, &net_number, sizeof(net_number), 0);
+	}
 
-	// unlock receive thread to receive server handshake
-	username_sent = 1;
-	pthread_cond_signal(&send_recv_cond);
+	// signal to receive thread that server has sent response
+	room_req_sent = 1;
+	pthread_mutex_lock(&send_recv_lock);
+	pthread_cond_signal(&room_req_cond);
 	pthread_mutex_unlock(&send_recv_lock);
-	while (1) {
-		// You will need a bit of control on your terminal
-		// console or GUI to have a nice input window.
-		// printf("\nPlease enter the message: ");
+
+	// Wait for recv thread to receive servers response to room request 
+	pthread_mutex_lock(&send_recv_lock);
+	while(server_room_response == 0){
+		pthread_cond_wait(&room_serv_resp_cond, &send_recv_lock);
+	}
+	pthread_mutex_unlock(&send_recv_lock);
+
+	if (server_room_response == 1){
 		
-		// allow user to send messages to server to be broadcasted to other clients
+		// prompt user for username and send to server
+		char buffer[512];
+		printf("Type your username: ");
 		memset(buffer, 0, 512);
 		fgets(buffer, 512, stdin);
 		n = send(sockfd, buffer, strlen(buffer), 0);
 		if (n < 0) error("ERROR writing to socket");
-		if (n == 1){
-			break;
-		} // we stop transmission when user type empty string
-	}
 
+
+		// unlock receive thread to receive server handshake
+		username_sent = 1;
+		pthread_mutex_lock(&send_recv_lock);
+		pthread_cond_signal(&send_recv_cond);
+		pthread_mutex_unlock(&send_recv_lock);
+
+		while (1) {
+			// You will need a bit of control on your terminal
+			// console or GUI to have a nice input window.
+			// printf("\nPlease enter the message: ");
+			
+			// allow user to send messages to server to be broadcasted to other clients
+			memset(buffer, 0, 512);
+			fgets(buffer, 512, stdin);
+			n = send(sockfd, buffer, strlen(buffer), 0);
+			if (n < 0) error("ERROR writing to socket");
+			if (n == 1){
+				break;
+			} // we stop transmission when user type empty string
+		}
+	}
 	return NULL;
 }
 
@@ -104,10 +180,19 @@ int main(int argc, char *argv[])
 	}
 
 	if (pthread_cond_init(&send_recv_cond, NULL) != 0){
-		error("pthread condition failed to initialize");
+		error("pthread send_recv_cond condition failed to initialize");
+	}
+
+	if (pthread_cond_init(&room_req_cond, NULL) != 0){
+		error("pthread room_req_cond condition failed to initialize");
+	}
+
+	if (pthread_cond_init(&room_serv_resp_cond, NULL) != 0){
+		error("pthread room_req_cond condition failed to initialize");
 	}
 
 	if (argc < 2) error("Please speicify hostname");
+	if (argc < 3) error("Please speicify room request");
 
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
@@ -129,15 +214,35 @@ int main(int argc, char *argv[])
 	pthread_t tid2;
 
 	ThreadArgs* args;
-	
+
+	// pass client socket fd, server ip and room number request to threads
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	if (strcmp(argv[2], "new") == 0){
+		args->new_room_req = -1;}
+	else{
+		args->new_room_req = atoi(argv[2]);
+	}
 	args->clisockfd = sockfd;
+	args->req_server_ip = malloc(strlen(argv[1]));
+	strcpy(args->req_server_ip, argv[1]);
+
 	if (pthread_create(&tid1, NULL, thread_main_send, (void*) args) != 0){
 		error("ERROR: send thread failed to create");
 	};
 
+	// recreate and pass client socket fd, server ip and room number request to threads
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	if (strcmp(argv[2], "new") == 0){
+		args->new_room_req = -1;}
+	else{
+		args->new_room_req = atoi(argv[2]);
+	}
+	// pass client socket fd, server ip and room number request to threads
 	args->clisockfd = sockfd;
+	args->req_server_ip = malloc(strlen(argv[1]));
+	strcpy(args->req_server_ip, argv[1]);
+
+
 	if (pthread_create(&tid2, NULL, thread_main_recv, (void*) args) != 0){
 		error("ERROR recv thread failed to create");
 	};
@@ -149,6 +254,8 @@ int main(int argc, char *argv[])
 	close(sockfd);
 	pthread_mutex_destroy(&send_recv_lock);
 	pthread_cond_destroy(&send_recv_cond);
+	pthread_cond_destroy(&room_req_cond);
+	pthread_cond_destroy(&room_serv_resp_cond);
 
 	return 0;
 }

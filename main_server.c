@@ -9,7 +9,7 @@
 #include <pthread.h>
 #include <time.h>
 
-#define PORT_NUM 9999
+#define PORT_NUM 4444
 #define COLOR 6 // Total amount of colors
 int col[COLOR];
 int col_chosen[COLOR];
@@ -40,15 +40,61 @@ void error(const char *msg)
 	exit(1);
 }
 
+typedef struct _ROOM {
+	int roomNumber;
+	struct _ROOM* next;
+} ROOM;
+
 typedef struct _USR {
 	int msg_col;		// users msg color in chat room
 	char* username;  	// users name for chat room
 	int clisockfd;		// socket file descriptor
+	struct _ROOM* room; // pointer to user's room
 	struct _USR* next;	// for linked list queue
 } USR;
 
 USR *head = NULL;
 USR *tail = NULL;
+
+ROOM *room_head = NULL;
+ROOM *room_tail = NULL;
+
+ROOM* add_room(int room_number){
+	if (room_head == NULL){
+		room_head = (ROOM*) malloc(sizeof(ROOM));
+		room_head->roomNumber = room_number;
+		room_head->next = NULL;
+		room_tail = room_head;
+		return room_tail;
+	} else{
+		room_tail->next = (ROOM*) malloc(sizeof(ROOM));
+		room_tail->next->roomNumber = room_number;
+		room_tail->next->next = NULL;
+		room_tail = room_tail->next;
+		return room_tail;
+	}
+}
+
+// search for room
+ROOM* search_room(int room_number){
+	ROOM* cur = room_head;
+	while(cur != NULL){
+		if (cur->roomNumber == room_number){
+			return cur;
+		}
+		cur = cur->next;
+	}
+	return NULL;
+}
+
+// print all rooms in server
+void print_current_rooms(){
+	ROOM* cur = room_head;
+	while(cur != NULL){
+		printf("Room %d, pointer %p\n", cur->roomNumber, cur);
+		cur = cur->next;
+	}
+}
 
 void add_tail(int newclisockfd)
 {
@@ -56,6 +102,7 @@ void add_tail(int newclisockfd)
 		head = (USR*) malloc(sizeof(USR));
 		head->clisockfd = newclisockfd;
 		head->username = NULL;
+		head->room = NULL;
 		head->next = NULL;
 		tail = head;
 	} else {
@@ -65,6 +112,23 @@ void add_tail(int newclisockfd)
 		tail->next->username = NULL;
 		tail = tail->next;
 	}
+}
+
+// returns 1 on successfull user to room insertion
+int connect_user_to_room(ROOM* room, int clisockfd){
+	if (room == NULL){
+		error("invalid room");
+	}
+
+	USR *cur = head;
+	while (cur != NULL){
+		if (cur->clisockfd == clisockfd){
+			cur->room = room;
+			return 1;
+		}
+		cur = cur->next;
+	}
+	return 0;
 }
 
 // returns 1 on successfull username insertion, returns 0 if client cannot be found
@@ -108,8 +172,9 @@ void print_current_clients(){
 				cur = cur->next;
 				continue;
 			}
-			printf("%s[ip: %s]\n", cur->username, inet_ntoa(cliaddr.sin_addr));
-		}	
+			
+			printf("%s[ip: %s] ROOM#%3d\n", cur->username, inet_ntoa(cliaddr.sin_addr), cur->room->roomNumber);
+		}
 		cur = cur->next;
 	}
 	printf("\n");
@@ -140,6 +205,9 @@ void broadcast(int fromfd, char* message, int server_msg)
 		sender = sender->next;
 	}
 
+	// get senders room number
+	int sender_room_number = sender->room->roomNumber;
+
 	// get sender msg color / if broadcast is server message default color to white
 	if (server_msg == 1){
 		sprintf(sender_msg_color, "\e[0m");
@@ -151,16 +219,20 @@ void broadcast(int fromfd, char* message, int server_msg)
 	// traverse through all connected clients
 	USR* cur = head;
 	while (cur != NULL) {
-		// check if cur is not the one who sent the message
-		if (cur->clisockfd != fromfd && cur->username != NULL) {
-			// prepare message
-			char buffer[512];
-			sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
-			int nmsg = strlen(buffer);
-			// send!
-			int nsen = send(cur->clisockfd, buffer, nmsg, 0);
-			if (nsen != nmsg) error("ERROR send() failed");
+		// check if sender is in the same room as cur
+		if(cur->room->roomNumber == sender_room_number){
+			// check if cur is not the one who sent the message
+			if (cur->clisockfd != fromfd && cur->username != NULL) {
+				// prepare message
+				char buffer[512];
+				sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
+				int nmsg = strlen(buffer);
+				// send!
+				int nsen = send(cur->clisockfd, buffer, nmsg, 0);
+				if (nsen != nmsg) error("ERROR send() failed");
+			}
 		}
+
 
 		cur = cur->next;
 	}
@@ -217,6 +289,44 @@ void* thread_main(void* args)
 	char buffer[512];
 	int nsen, nrcv = 0;
 
+	// receive from client room request
+	int net_number;
+	recv(clisockfd, &net_number, sizeof(net_number), 0);
+	int room_number = ntohl(net_number);
+
+	// if user requested to create new room
+	ROOM* client_room;
+	int new_room_number;
+	if (room_number == -1){
+		do{
+			new_room_number = rand() % 1000;
+		} while(search_room(new_room_number) != NULL && new_room_number != 0);
+
+		// create new room struct
+		client_room = add_room(new_room_number);
+		
+		// send to client that room was created successfully
+		net_number = htonl(new_room_number);
+		nsen = send(clisockfd, &net_number, sizeof(net_number), 0);
+		if (nsen < 0) error("ERROR send() failed");
+	}
+	// if not search current rooms for matching room #
+	else{
+		client_room = search_room(room_number);
+		if (client_room != NULL){
+			// send to client that room exists
+			net_number = htonl(room_number);
+			nsen = send(clisockfd, &net_number, sizeof(net_number), 0);
+			if (nsen < 0) error("ERROR send() failed");
+		}
+		else{
+			// send to client that room does not exist
+			net_number = htonl(-1);
+			nsen = send(clisockfd, &net_number, sizeof(net_number), 0);
+			return NULL;
+		}
+	}
+
 	// receive username
 	while(nrcv == 0){
 		memset(buffer, 0, 512);
@@ -234,7 +344,12 @@ void* thread_main(void* args)
 		error("failed to find user and change message color");
 	}
 
-	// TODO send to client server acceptance of username
+	// add user to room
+	if (connect_user_to_room(client_room, clisockfd) == 0){
+		error("failed to find user and change message color");
+	}
+	
+	// Send to client server acceptance of username
 	const char* confirm_msg = "CONNECTED\n";
 	nsen = send(clisockfd, confirm_msg, strlen(confirm_msg), 0);
 	if (nsen < 0) error("ERROR send() failed");
@@ -242,10 +357,12 @@ void* thread_main(void* args)
 		printf("ERROR invalid username entered");
 		return NULL;
 	} 
+
 	// broadcast to all clients of new client that has joined server
 	char client_joined_msg[50];
 	sprintf(client_joined_msg, "joined chatroom!\n");
 	broadcast(clisockfd, client_joined_msg, 1);
+
 	// print current clients to server
 	print_current_clients();
 
