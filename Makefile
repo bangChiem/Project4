@@ -11,4 +11,4 @@ all:
 clean:
 	rm chat_server chat_client
 	rm chat_server_full chat_client_full
-
+	rm main_client main_server
