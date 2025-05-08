@@ -9,7 +9,7 @@
 #include <netdb.h> 
 #include <pthread.h>
 
-#define PORT_NUM 4444
+#define PORT_NUM 5555
 
 pthread_mutex_t send_recv_lock;
 pthread_cond_t send_recv_cond;
@@ -173,6 +173,27 @@ void* thread_main_send(void* args)
 	return NULL;
 }
 
+int get_serv_room_info(int sockfd){
+	int n;
+	char buffer[512];
+	// send to server flag for requst for room info
+	int net_number = htonl(-2);
+	send(sockfd, &net_number, sizeof(net_number), 0);
+	memset(buffer, 0, 512);
+
+	n = recv(sockfd, buffer, 512, 0);
+	if (n < 0) error("ERROR recv() failed");
+
+	// check for a empty room
+	if (strcmp(buffer, "NO ROOMS") == 0){
+		return 0;
+	}
+
+	printf("%s", buffer);
+	return 1;
+
+}
+
 int main(int argc, char *argv[])
 {
 	if (pthread_mutex_init(&send_recv_lock, NULL)){
@@ -192,7 +213,6 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc < 2) error("Please speicify hostname");
-	if (argc < 3) error("Please speicify room request");
 
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
@@ -210,6 +230,54 @@ int main(int argc, char *argv[])
 			(struct sockaddr *) &serv_addr, slen);
 	if (status < 0) error("ERROR connecting");
 
+	char* req_serv_ip = argv[1];
+	int chat_room_req;
+
+	// if client did not specify chat room retrieve rooms from server
+	if (argc < 3){
+		char buffer[512];
+		int room_info_status = get_serv_room_info(sockfd);
+
+		// Reconnect to server
+		sockfd = socket(AF_INET, SOCK_STREAM, 0);
+		if (sockfd < 0) error("ERROR opening socket");
+		int status = connect(sockfd, 
+		(struct sockaddr *) &serv_addr, slen);
+		if (status < 0) error("ERROR connecting");
+		username_sent = 0;
+		server_room_response = 0;
+		room_req_sent = 0;
+
+		if (room_info_status == 1){
+			printf("Choose the room number or type [new] to create a new room: ");
+			memset(buffer, 0, 512);
+			fgets(buffer, 512, stdin);
+			if (strcmp(buffer, "new\n") == 0){
+				printf("creating new room\n");
+				chat_room_req = -1;
+			}
+			else{
+				printf("attempting to join room %s\n", buffer);
+				chat_room_req = atoi(buffer);
+			}
+		}
+		else if (room_info_status == 0){
+			printf("NO ROOMS creating new room\n");
+			chat_room_req = -1;
+		}
+		else{
+			error("Undefined room info status returned");
+		}
+	}
+	else{
+		if (strcmp(argv[2], "new") == 0){
+			chat_room_req = -1;
+		}
+		else{
+			chat_room_req = atoi(argv[2]);
+		}
+	}
+
 	pthread_t tid1;
 	pthread_t tid2;
 
@@ -217,31 +285,22 @@ int main(int argc, char *argv[])
 
 	// pass client socket fd, server ip and room number request to threads
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	if (strcmp(argv[2], "new") == 0){
-		args->new_room_req = -1;}
-	else{
-		args->new_room_req = atoi(argv[2]);
-	}
+	args->new_room_req = chat_room_req;
 	args->clisockfd = sockfd;
-	args->req_server_ip = malloc(strlen(argv[1]));
-	strcpy(args->req_server_ip, argv[1]);
-
+	args->req_server_ip = malloc(strlen(req_serv_ip));
+	strcpy(args->req_server_ip, req_serv_ip);
+	// pass client socket fd, server ip and room number request to threads
 	if (pthread_create(&tid1, NULL, thread_main_send, (void*) args) != 0){
 		error("ERROR: send thread failed to create");
 	};
 
+
 	// recreate and pass client socket fd, server ip and room number request to threads
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	if (strcmp(argv[2], "new") == 0){
-		args->new_room_req = -1;}
-	else{
-		args->new_room_req = atoi(argv[2]);
-	}
 	// pass client socket fd, server ip and room number request to threads
 	args->clisockfd = sockfd;
-	args->req_server_ip = malloc(strlen(argv[1]));
-	strcpy(args->req_server_ip, argv[1]);
-
+	args->req_server_ip = malloc(strlen(req_serv_ip));
+	strcpy(args->req_server_ip, req_serv_ip);
 
 	if (pthread_create(&tid2, NULL, thread_main_recv, (void*) args) != 0){
 		error("ERROR recv thread failed to create");
