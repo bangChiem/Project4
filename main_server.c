@@ -236,8 +236,8 @@ void broadcast(int fromfd, char* message, int server_msg)
 				char buffer[512]={0};
 				sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
 				// send!
-				int nsen = send(cur->clisockfd, buffer, strlen(buffer, 0);
-				if (nsen != nmsg) error("ERROR send() failed");
+				int nsen = send(cur->clisockfd, buffer, strlen(buffer), 0);
+				if (nsen != strlen(buffer)) error("ERROR send() failed");
 			}
 		}
 
@@ -448,8 +448,8 @@ void* thread_main(void* args)
 	return NULL;
 }
 
-void *file transfer(void *args){
-	pthread_detatch(pthread_self());
+void *file_transfer(void *args){
+	pthread_detach(pthread_self());
 	//extract room number, filename, and client sending form args
 
 	//add mutex lock so only 1 file is transfered at a time
