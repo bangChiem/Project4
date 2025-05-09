@@ -21,6 +21,8 @@ int username_sent = 0;
 int server_room_response = 0;
 int room_req_sent = 0;
 
+char argv_address[31];
+
 void error(const char *msg)
 {
 	perror(msg);
@@ -34,32 +36,68 @@ typedef struct _ThreadArgs {
 } ThreadArgs;
 
 //Function for dealing with file send command
+//Argument is the send command
 void* send_file(void* args){
 	pthread_detach(pthread_self());
-	
+	char * filename = (char*)args;
+	//Assume server is listening on FTPort
 	//Connect to socket via port FTport
-	
-	//Tell server it will recieve transfer
-
-	//Extract from args file name
-	
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if(sockfd < 0) error("Error opening FTP Socket");
+	struct sockaddr_in serv_ftp;
+	serv_ftp.sin_family = AF_INET;
+	serv_ftp.sin_addr.s_addr = inet_addr(argv_address);
+	serv_ftp.sin_port = htons(FTPort);
+	int status = connect(sockfd,(struct sockaddr *) &serv_ftp, sizeof(serv_ftp));
+	if(status<0) error("ERROR on FTP Connect");
 	//call fopen on the file
-
+	FILE * f = fopen(filename, "rb");
 	//read the file and send its contents to the server
+	char buffer[1024] = {0};
+	while(fgets(buffer, 1024, f) > 0){
+		int numsent = send(sockfd, buffer, sizeof(buffer), 0);
+		if(numsent<0) error("Error on Send");
+		memset(buffer, 0, 1024);
+	}
 		//TODO add mutex lock so 2 files cannot be sent at the same time
 	pthread_exit(0);
 }
-
+//Argument is filename and sender name
 void* recv_file(void* args){
 	pthread_detach(pthread_self());
-	//Connect to socket via port FTport
-
 	//Extract filename
-
+	char** targs = (char**) args; 
+	char filename[127] = {0};
+	char user[127] = {0};
+	strcpy(filename, targs[0]);
+	strcpy(user, targs[1]);
+	//ask if would like to recieve file
+	printf("A file %s was sent by %s. Download? Y/N", filename, user);
+	char resp[8];
+	scanf("%s",resp);
+	if(resp[0] !='Y') pthread_exit(0);
+	//Connect to socket via port FTport
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if(sockfd < 0) error("Error opening FTP Socket");
+	struct sockaddr_in serv_ftp;
+	serv_ftp.sin_family = AF_INET;
+	serv_ftp.sin_addr.s_addr = inet_addr(argv_address);
+	serv_ftp.sin_port = htons(FTPort);
+	int status = connect(sockfd,(struct sockaddr *) &serv_ftp, sizeof(serv_ftp));
+	if(status<0) error("ERROR on FTP Connect");
+	
 	//call fopen
-
+	FILE* f = fopen(filename, "wb+");
+	if(f = NULL)error("Error opening recieving file");
 	//read from server and write to file
-		//Add mutex lock so 2 files cannot be accepted at once
+	char buffer[1024] = {0};
+	while(recv(sockfd, buffer, sizeof(buffer), 0) > 0){
+		int printnum = fputs(buffer, f);
+		if(printnum<0) error("Error on Print");
+		memset(buffer, 0, 1024);
+	}
+	fclose(f);
+		//Maybe Add mutex lock so 2 files cannot be accepted at once
 	pthread_exit(0);
 }
 
@@ -129,12 +167,27 @@ void* thread_main_recv(void* args)
 		memset(buffer, 0, 512);
 		n = recv(sockfd, buffer, 512, 0);
 		if (n < 0) error("ERROR recv() failed");
-		//TODO check if message recieved was to recieve a file
+		//check if message recieved was to recieve a file
 		//if buffer = SEND filename
-			//ask if would like to recieve file
-			//if yes initiate recv_file thread pass filename
-		//else
-		printf("%s", buffer);
+		char *command = strchr(buffer, ' ');
+		
+		if(strncmp(command, " SEND ", 6) == 0){
+			//initiate recv_file thread pass filename
+			char * split = buffer;
+			char * buff_args[4];
+			char * args	[2];
+			buff_args[0] = strtok(split, "(");
+			if(strtok(split, " ") == NULL) error("Error SEND command");
+			buff_args[1] = strtok(split, " "); 
+			buff_args[2] = strtok(split, " "); 
+			buff_args[3] = strtok(split, " "); 
+			args[0] = buff_args[0];
+			args[1] = buff_args[2];
+			pthread_t tid;
+			pthread_create(&tid, NULL, recv_file, (void*) args);	
+		}
+		else
+			printf("%s", buffer);
 	}
 	return NULL;
 }
@@ -201,8 +254,11 @@ void* thread_main_send(void* args)
 			fgets(buffer, 512, stdin);
 			//TODO
 			//if buffer = sendfilename
+				if(strncmp(buffer, "SEND ", 5) == 0){
+					pthread_t tid;
+					pthread_create(&tid, NULL, send_file ,(void*)buffer);
+				}
 				//start send ftp
-			//else
 			n = send(sockfd, buffer, strlen(buffer), 0);
 			if (n < 0) error("ERROR writing to socket");
 			if (n == 1){
@@ -236,6 +292,8 @@ int get_serv_room_info(int sockfd){
 
 int main(int argc, char *argv[])
 {
+	strcpy(argv_address, argv[1]);
+
 	if (pthread_mutex_init(&send_recv_lock, NULL)){
 		error("mutex lock failed to intialize");
 	}
