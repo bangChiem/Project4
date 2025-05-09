@@ -10,6 +10,7 @@
 #include <pthread.h>
 
 #define PORT_NUM 5555
+#define FTPort 21
 
 pthread_mutex_t send_recv_lock;
 pthread_cond_t send_recv_cond;
@@ -31,6 +32,36 @@ typedef struct _ThreadArgs {
 	int new_room_req;
 	char *req_server_ip;
 } ThreadArgs;
+
+//Function for dealing with file send command
+void* send_file(void* args){
+	pthread_detach(pthread_self());
+	
+	//Connect to socket via port FTport
+	
+	//Tell server it will recieve transfer
+
+	//Extract from args file name
+	
+	//call fopen on the file
+
+	//read the file and send its contents to the server
+		//TODO add mutex lock so 2 files cannot be sent at the same time
+	pthread_exit(0);
+}
+
+void* recv_file(void* args){
+	pthread_detach(pthread_self());
+	//Connect to socket via port FTport
+
+	//Extract filename
+
+	//call fopen
+
+	//read from server and write to file
+		//Add mutex lock so 2 files cannot be accepted at once
+	pthread_exit(0);
+}
 
 void* thread_main_recv(void* args)
 {
@@ -98,6 +129,11 @@ void* thread_main_recv(void* args)
 		memset(buffer, 0, 512);
 		n = recv(sockfd, buffer, 512, 0);
 		if (n < 0) error("ERROR recv() failed");
+		//TODO check if message recieved was to recieve a file
+		//if buffer = SEND filename
+			//ask if would like to recieve file
+			//if yes initiate recv_file thread pass filename
+		//else
 		printf("%s", buffer);
 	}
 	return NULL;
@@ -163,6 +199,10 @@ void* thread_main_send(void* args)
 			// allow user to send messages to server to be broadcasted to other clients
 			memset(buffer, 0, 512);
 			fgets(buffer, 512, stdin);
+			//TODO
+			//if buffer = sendfilename
+				//start send ftp
+			//else
 			n = send(sockfd, buffer, strlen(buffer), 0);
 			if (n < 0) error("ERROR writing to socket");
 			if (n == 1){

@@ -10,6 +10,8 @@
 #include <time.h>
 
 #define PORT_NUM 5555
+#define FTPort 21
+
 #define COLOR 6 // Total amount of colors
 int col[COLOR];
 int col_chosen[COLOR];
@@ -231,11 +233,10 @@ void broadcast(int fromfd, char* message, int server_msg)
 			// check if cur is not the one who sent the message
 			if (cur->clisockfd != fromfd && cur->username != NULL) {
 				// prepare message
-				char buffer[512];
+				char buffer[512]={0};
 				sprintf(buffer, "%s%s(%s)] %s\e[0m\n", sender_msg_color, sender->username, getIpAddress(sender->clisockfd), message);
-				int nmsg = strlen(buffer);
 				// send!
-				int nsen = send(cur->clisockfd, buffer, nmsg, 0);
+				int nsen = send(cur->clisockfd, buffer, strlen(buffer, 0);
 				if (nsen != nmsg) error("ERROR send() failed");
 			}
 		}
@@ -430,6 +431,11 @@ void* thread_main(void* args)
 		}
 
 		if (nrcv > 0){
+			//TODO
+			//if buffer == send filename
+				//if client wants file
+					//call ftp function
+			//else
 			broadcast(clisockfd, buffer, 0);
 		}
 	}
@@ -440,6 +446,20 @@ void* thread_main(void* args)
 	//-------------------------------
 
 	return NULL;
+}
+
+void *file transfer(void *args){
+	pthread_detatch(pthread_self());
+	//extract room number, filename, and client sending form args
+
+	//add mutex lock so only 1 file is transfered at a time
+	//create a serverside temporary cpy of file
+
+	//broadcast asking clients in room if they would like the file
+
+	//send to thoses who accept
+
+	pthread_exit(0);
 }
 
 int main(int argc, char *argv[])
